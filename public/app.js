@@ -53,6 +53,26 @@ function propOptions(selected) {
     .join('');
 }
 
+/* 提示录入/编辑表单转移行的下拉填充：
+ * 按最新道具 / 区位名单重建选项并保留原选择；原选择对应的道具或区位已被删除时，
+ * 把它保留为行内醒目标出的失效项（提交时仍带原值，由服务端校验明确拒绝），
+ * 绝不悄悄改用首项。名称一律按普通文本值处理（Set + 字符串全等比较，
+ * 「__proto__」等特殊串不触发任何对象原型语义）。
+ */
+function fillTransferSelect(sel, kind, selected) {
+  const build = kind === 'prop' ? propOptions : locationOptions;
+  const valid = new Set((kind === 'prop' ? state.props : state.locations).map((x) => x.name));
+  if (selected && !valid.has(selected)) {
+    sel.innerHTML =
+      `<option value="${esc(selected)}" data-stale="1" selected disabled>「${esc(selected)}」（已删除，请重新选择）</option>` +
+      build(null);
+    sel.classList.add('stale-value');
+  } else {
+    sel.innerHTML = build(selected || null);
+    sel.classList.remove('stale-value');
+  }
+}
+
 /* ---------- 冲突溯源（失败提示旁展示，lastMovedCue 为 null 表示初始区位） ---------- */
 
 function lastMovedText(cueNumber) {
@@ -123,13 +143,29 @@ function renderCueForm() {
   $('#cue-cancel').classList.toggle('hidden', editingCue === null);
 }
 
+/* 全局状态刷新后，同步提示录入/编辑表单中已有转移行的三个下拉：
+ * 按最新道具与区位名单重建选项，新增的道具 / 区位立即可选（可立即用于试排）；
+ * 只重建行内下拉，不动行本身——各行原选择、行顺序、提示号、备注与编辑状态
+ * 均保持不变；原选择已被删除的，行内标出失效值（见 fillTransferSelect）。
+ */
+function renderTransferRows() {
+  $('#transfer-rows').querySelectorAll('tr').forEach((tr) => {
+    fillTransferSelect(tr.querySelector('.t-prop'), 'prop', tr.querySelector('.t-prop').value);
+    fillTransferSelect(tr.querySelector('.t-from'), 'loc', tr.querySelector('.t-from').value);
+    fillTransferSelect(tr.querySelector('.t-to'), 'loc', tr.querySelector('.t-to').value);
+  });
+}
+
 function addTransferRow(t) {
   const tr = document.createElement('tr');
   tr.innerHTML = `
-    <td><select class="t-prop">${propOptions(t && t.prop)}</select></td>
-    <td><select class="t-from">${locationOptions(t && t.from)}</select></td>
-    <td><select class="t-to">${locationOptions(t && t.to)}</select></td>
+    <td><select class="t-prop"></select></td>
+    <td><select class="t-from"></select></td>
+    <td><select class="t-to"></select></td>
     <td><button type="button" class="link t-remove">移除</button></td>`;
+  fillTransferSelect(tr.querySelector('.t-prop'), 'prop', t && t.prop);
+  fillTransferSelect(tr.querySelector('.t-from'), 'loc', t && t.from);
+  fillTransferSelect(tr.querySelector('.t-to'), 'loc', t && t.to);
   tr.querySelector('.t-remove').onclick = () => {
     tr.remove();
     if (!$('#transfer-rows').children.length) addTransferRow();
@@ -216,6 +252,7 @@ function render() {
   renderLocations();
   renderProps();
   renderCueForm();
+  renderTransferRows();
   renderCues();
   renderReplay();
   renderSimForm();
@@ -544,6 +581,15 @@ $('#prop-rows').addEventListener('click', (e) => {
 });
 
 $('#add-transfer').addEventListener('click', () => { addTransferRow(); clearPreview(); });
+
+// 用户在转移行中重新选择后，立即移除该下拉的失效标记与失效选项
+$('#transfer-rows').addEventListener('change', (e) => {
+  const sel = e.target;
+  if (!sel.classList || !sel.classList.contains('stale-value')) return;
+  sel.classList.remove('stale-value');
+  const stale = sel.querySelector('option[data-stale]');
+  if (stale) stale.remove();
+});
 
 $('#cue-cancel').addEventListener('click', resetCueForm);
 
