@@ -47,10 +47,98 @@ function locationOptions(selected) {
     .join('');
 }
 
-function propOptions(selected) {
-  return state.props
-    .map((p) => `<option value="${esc(p.name)}" ${p.name === selected ? 'selected' : ''}>${esc(p.name)}</option>`)
+/* ---------- 提示录入/编辑表单：转移行三个下拉与最新数据同步 ----------
+ * 表单打开期间新增道具/区位后，已有行的下拉必须立即出现新选项；原选择
+ * 对应的道具/区位被删除时不能悄悄落到首项：把失效值保留为一个明确标注的
+ * 选项（值不变），并在行内标出失效，等待用户重新选择。「__proto__」等
+ * 特殊名称一律按普通文本值处理（比较只用值，不按名称做对象键存取）。
+ */
+function transferSelectOptions(kind, selected) {
+  const list = kind === 'prop' ? state.props : state.locations;
+  const label = (item) =>
+    kind === 'prop' ? item.name : `${item.name}${item.unlimited ? '（不限）' : '（限一件）'}`;
+  let stale = '';
+  if (selected && !list.some((item) => item.name === selected)) {
+    stale = `<option value="${esc(selected)}" selected>⚠ ${esc(selected)}（已失效：${
+      kind === 'prop' ? '道具已删除' : '区位已删除'
+    }，请重新选择）</option>`;
+  }
+  return stale + list
+    .map((item) =>
+      `<option value="${esc(item.name)}" ${item.name === selected ? 'selected' : ''}>${esc(label(item))}</option>`
+    )
     .join('');
+}
+
+function syncTransferRows() {
+  const tbody = $('#transfer-rows');
+  if (!tbody) return;
+  tbody.querySelectorAll('tr.t-row').forEach((tr) => {
+    const propSel = tr.querySelector('.t-prop');
+    const fromSel = tr.querySelector('.t-from');
+    const toSel = tr.querySelector('.t-to');
+
+    // 只重建各自行的 <option>，保留当前值与行顺序；新增项随即可选，
+    // 失效值保留为带标注的选项，浏览器不会回落到首项
+    const prop = propSel.value;
+    const from = fromSel.value;
+    const to = toSel.value;
+    propSel.innerHTML = transferSelectOptions('prop', prop);
+    fromSel.innerHTML = transferSelectOptions('loc', from);
+    toSel.innerHTML = transferSelectOptions('loc', to);
+    // 重建 option 后显式恢复各下拉的值（浏览器在 innerHTML 后会按 selected
+    // 标注自行恢复，这里显式赋值以保证行为确定，杜绝任何首项回落）
+    propSel.value = prop;
+    fromSel.value = from;
+    toSel.value = to;
+
+    const propValid = !prop || state.props.some((p) => p.name === prop);
+    const fromValid = !from || state.locations.some((l) => l.name === from);
+    const toValid = !to || state.locations.some((l) => l.name === to);
+    propSel.classList.toggle('t-invalid', !propValid);
+    fromSel.classList.toggle('t-invalid', !fromValid);
+    toSel.classList.toggle('t-invalid', !toValid);
+
+    // 行内明确标出失效值；三个选择都重新有效后提示自动消失
+    let warnRow = tr.nextElementSibling;
+    if (!warnRow || !warnRow.classList.contains('t-stale-row')) warnRow = null;
+    const parts = [];
+    if (!propValid) parts.push(`道具「${prop}」已删除`);
+    if (!fromValid) parts.push(`来源区位「${from}」已删除`);
+    if (!toValid) parts.push(`目标区位「${to}」已删除`);
+    if (parts.length) {
+      if (!warnRow) {
+        warnRow = document.createElement('tr');
+        warnRow.className = 't-stale-row';
+        warnRow.innerHTML = '<td colspan="4" class="t-stale-warn"></td>';
+        tr.parentNode.insertBefore(warnRow, tr.nextSibling);
+      }
+      warnRow.querySelector('.t-stale-warn').textContent =
+        `⚠ ${parts.join('；')}，请重新选择后再试排或保存（当前失效值不会被自动替换为其他选项）`;
+    } else if (warnRow) {
+      warnRow.remove();
+    }
+  });
+}
+
+// 检查转移行中是否存在失效或未完成的选择；返回首条错误信息，无问题返回 null
+function transferRowsError() {
+  const rows = [...$('#transfer-rows').querySelectorAll('tr.t-row')];
+  if (!rows.length) return '每组提示至少需要一条转移';
+  for (const tr of rows) {
+    const propSel = tr.querySelector('.t-prop');
+    const fromSel = tr.querySelector('.t-from');
+    const toSel = tr.querySelector('.t-to');
+    if (propSel.classList.contains('t-invalid'))
+      return `道具「${propSel.value}」已删除，请在该行重新选择道具后再试排或保存`;
+    if (fromSel.classList.contains('t-invalid'))
+      return `来源区位「${fromSel.value}」已删除，请在该行重新选择来源区位后再试排或保存`;
+    if (toSel.classList.contains('t-invalid'))
+      return `目标区位「${toSel.value}」已删除，请在该行重新选择目标区位后再试排或保存`;
+    if (!propSel.value || !fromSel.value || !toSel.value)
+      return '每条转移都要选择道具、来源区位和目标区位';
+  }
+  return null;
 }
 
 /* ---------- 冲突溯源（失败提示旁展示，lastMovedCue 为 null 表示初始区位） ---------- */
@@ -125,14 +213,17 @@ function renderCueForm() {
 
 function addTransferRow(t) {
   const tr = document.createElement('tr');
+  tr.className = 't-row';
   tr.innerHTML = `
-    <td><select class="t-prop">${propOptions(t && t.prop)}</select></td>
-    <td><select class="t-from">${locationOptions(t && t.from)}</select></td>
-    <td><select class="t-to">${locationOptions(t && t.to)}</select></td>
+    <td><select class="t-prop">${transferSelectOptions('prop', t && t.prop)}</select></td>
+    <td><select class="t-from">${transferSelectOptions('loc', t && t.from)}</select></td>
+    <td><select class="t-to">${transferSelectOptions('loc', t && t.to)}</select></td>
     <td><button type="button" class="link t-remove">移除</button></td>`;
   tr.querySelector('.t-remove').onclick = () => {
     tr.remove();
-    if (!$('#transfer-rows').children.length) addTransferRow();
+    const stale = tr.nextElementSibling; // 紧跟的失效提示行一并移除
+    if (stale && stale.classList.contains('t-stale-row')) stale.remove();
+    if (!$('#transfer-rows').querySelectorAll('tr.t-row').length) addTransferRow();
     clearPreview();
   };
   $('#transfer-rows').appendChild(tr);
@@ -216,6 +307,7 @@ function render() {
   renderLocations();
   renderProps();
   renderCueForm();
+  syncTransferRows(); // 仅更新已有转移行的下拉选项，保留各行选择/顺序与编辑态
   renderCues();
   renderReplay();
   renderSimForm();
@@ -553,7 +645,7 @@ function collectCueForm() {
   return {
     number: Number($('#cue-number').value),
     note: $('#cue-note').value.trim(),
-    transfers: [...$('#transfer-rows').querySelectorAll('tr')].map((tr) => ({
+    transfers: [...$('#transfer-rows').querySelectorAll('tr.t-row')].map((tr) => ({
       prop: tr.querySelector('.t-prop').value,
       from: tr.querySelector('.t-from').value,
       to: tr.querySelector('.t-to').value,
@@ -621,6 +713,12 @@ function renderPreviewError(msg) {
 }
 
 $('#cue-preview').addEventListener('click', async () => {
+  const formError = transferRowsError();
+  if (formError) {
+    renderPreviewError(formError);
+    toast(formError);
+    return;
+  }
   const btn = $('#cue-preview');
   clearPreview();
   btn.disabled = true;
@@ -645,12 +743,21 @@ $('#cue-preview').addEventListener('click', async () => {
   }
 });
 
-// 表单内容一旦改动，旧预览即失效
+// 表单内容一旦改动，旧预览即失效；同时按最新数据同步下拉（用户从失效值
+// 重新选择后立即解除行内失效标记）
 $('#cue-form').addEventListener('input', clearPreview);
-$('#cue-form').addEventListener('change', clearPreview);
+$('#cue-form').addEventListener('change', (e) => {
+  if (e.target.closest('#transfer-rows')) syncTransferRows();
+  clearPreview();
+});
 
 $('#cue-form').addEventListener('submit', (e) => {
   e.preventDefault();
+  const formError = transferRowsError();
+  if (formError) {
+    toast(formError);
+    return;
+  }
   const { number, note, transfers } = collectCueForm();
   const req = editingCue !== null
     ? api(`/api/cues/${editingCue}`, 'PUT', { note, transfers })

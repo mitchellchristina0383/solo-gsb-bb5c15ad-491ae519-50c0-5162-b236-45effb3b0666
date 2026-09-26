@@ -96,6 +96,19 @@ button.link { background: none; border: none; color: var(--accent2); padding: 2p
 .spacer { flex: 1; }
 .hidden { display: none !important; }
 
+/* 转移行：原选择对应的道具/区位已删除时，明确标出失效值，不悄悄回落首项 */
+select.t-invalid {
+  border-color: var(--err);
+  color: var(--err);
+  background: rgba(224, 92, 106, .10);
+}
+.t-stale-row .t-stale-warn {
+  color: var(--err);
+  font-size: 13px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
 /* 提示卡片 */
 .cue-item {
   border: 1px solid var(--line);

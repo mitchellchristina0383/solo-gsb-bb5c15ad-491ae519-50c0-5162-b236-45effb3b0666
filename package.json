@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node test/smoke.js && node test/dom-sync.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
